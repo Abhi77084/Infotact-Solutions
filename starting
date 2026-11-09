@@ -1,0 +1,128 @@
+model.fit(X_train, y_train)
+
+print("Model test accuracy:", round(accuracy_score(y_test, model.predict(X_test)), 2))
+
+
+# 2. Build supply chain network
+G = nx.DiGraph()
+
+companies = {
+    "Supplier_A": {"risk": 0.75, "inventory": 5, "transport": 0.60},
+    "Supplier_B": {"risk": 0.30, "inventory": 25, "transport": 0.20},
+    "Factory":     {"risk": 0.40, "inventory": 12, "transport": 0.35},
+    "Warehouse":   {"risk": 0.25, "inventory": 20, "transport": 0.25},
+    "Retailer_1":  {"risk": 0.20, "inventory": 15, "transport": 0.30},
+    "Retailer_2":  {"risk": 0.35, "inventory": 10, "transport": 0.40},
+    "Customer":    {"risk": 0.10, "inventory": 30, "transport": 0.10}
+}
+
+for company, attrs in companies.items():
+    G.add_node(company, **attrs)
+
+# Edges represent supply/dependency relationships
+G.add_edges_from([
+    ("Supplier_A", "Factory"),
+    ("Supplier_B", "Factory"),
+    ("Factory", "Warehouse"),
+    ("Warehouse", "Retailer_1"),
+    ("Warehouse", "Retailer_2"),
+    ("Retailer_1", "Customer"),
+    ("Retailer_2", "Customer")
+])
+
+
+# 3. Predict risk for a company using ML model
+def predict_company_risk(company, dependency_count):
+    attrs = G.nodes[company]
+    features = pd.DataFrame([{
+        "supplier_risk": attrs["risk"],
+        "dependency": dependency_count,
+        "inventory_days": attrs["inventory"],
+        "transport_risk": attrs["transport"]
+    }], columns=FEATURES)
+
+    probability = model.predict_proba(features)[0][1]
+    return probability
+
+
+# 4. Simulate disruption and ripple effects
+def simulate_disruption(disrupted_company):
+    if disrupted_company not in G:
+        print("Company not found.")
+        return
+
+    print("\\nDisruption started at:", disrupted_company)
+
+    # Nodes reachable downstream may be affected
+    affected = nx.descendants(G, disrupted_company)
+    affected.add(disrupted_company)
+
+    results = []
+    for company in affected:
+        dependency_count = G.in_degree(company) + 1
+        ml_risk = predict_company_risk(company, dependency_count)
+
+        # Combine ML probability with network exposure.
+        # This is a simple demonstration formula, not a calibrated business metric.
+        exposure = 1.0 if company == disrupted_company else min(
+            1.0, 0.35 + 0.15 * nx.shortest_path_length(G, disrupted_company, company)
+        )
+        final_risk = min(1.0, 0.65 * ml_risk + 0.35 * exposure)
+
+        results.append({
+            "Company": company,
+            "ML Disruption Probability": round(ml_risk * 100, 2),
+            "Network Exposure": round(exposure * 100, 2),
+            "Combined Risk Score": round(final_risk * 100, 2),
+            "Status": "HIGH RISK" if final_risk >= 0.60 else
+                      "MEDIUM RISK" if final_risk >= 0.35 else "LOW RISK"
+        })
+
+    result_df = pd.DataFrame(results).sort_values(
+        "Combined Risk Score", ascending=False
+    )
+
+    print("\\nRipple Effect Prediction:")
+    print(result_df.to_string(index=False))
+
+    result_df.to_csv("atmograph_results.csv", index=False)
+    print("\\nResults saved to atmograph_results.csv")
+
+    draw_network(disrupted_company, affected)
+    return result_df
+
+
+# 5. Visualize network and affected companies
+def draw_network(disrupted_company, affected):
+    position = nx.spring_layout(G, seed=42)
+
+    node_colors = []
+    for node in G.nodes:
+        if node == disrupted_company:
+            node_colors.append("red")
+        elif node in affected:
+            node_colors.append("orange")
+        else:
+            node_colors.append("lightgreen")
+
+    plt.figure(figsize=(11, 7))
+    nx.draw(
+        G, position, with_labels=True, node_color=node_colors,
+        node_size=2600, font_size=9, arrows=True, arrowsize=20
+    )
+    plt.title("AtmoGraph - Supply Chain Ripple Effect")
+    plt.legend(handles=[
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="red", markersize=10, label="Disrupted"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="orange", markersize=10, label="Affected"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="lightgreen", markersize=10, label="Unaffected")
+    ])
+    plt.tight_layout()
+    plt.show()
+
+
+# 6. Run the project
+if __name__ == "__main__":
+    print("\\nAvailable companies:", ", ".join(G.nodes))
